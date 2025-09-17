@@ -52,7 +52,22 @@ for j = 1:N
     end
 end
 
+row_sums = sum(Zprob, 2);
+row_sums(row_sums == 0) = 1;
+Zprob = bsxfun(@rdivide, Zprob, row_sums);
+
+end
 
 function c = cdf_normal(x)
-    c = 0.5 * erfc(-x/sqrt(2));
+    persistent use_normcdf;
+    if isempty(use_normcdf)
+        use_normcdf = (exist('normcdf', 'file') == 2) || ...
+                      (exist('normcdf', 'builtin') == 5);
+    end
 
+    if use_normcdf
+        c = normcdf(x);
+    else
+        c = 0.5 * erfc(-x/sqrt(2));
+    end
+end

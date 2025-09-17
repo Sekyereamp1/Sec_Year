@@ -5,7 +5,6 @@ function AGG = aggregates_2Sectors(psi, pol_s, Agrid, P, ...
 % Aggregate factors and goods using stationary distribution and occupation map.
 
 Na = numel(Agrid); NzA = numel(zA_grid); NzN = numel(zN_grid);
-Nz = NzA * NzN;
 
 kA_full = kron(ones(1,NzN), kA);     % Na x Nz
 tA_full = kron(ones(1,NzN), tA);
@@ -19,21 +18,25 @@ I_W = (pol_s == 1);
 I_A = (pol_s == 2);
 I_N = (pol_s == 3);
 
-A3 = repmat(Agrid, 1, Nz);
-K_supply = sum(sum( psi .* A3 ));
-K_demand = sum(sum( psi(I_A) .* kA_full(I_A) )) + sum(sum( psi(I_N) .* kN_full(I_N) ));
+% Aggregate household asset supply directly from the marginal asset
+% distribution to avoid creating a dense replicated asset grid.
+asset_marginal = sum(psi, 2);
+K_supply = sum(Agrid(:) .* asset_marginal);
 
-N_supply = sum( psi(I_W), 'all' );
-N_demand = sum( psi(I_N) .* nN_full(I_N), 'all' );
+K_demand = sum(sum(psi .* I_A .* kA_full)) + ...
+           sum(sum(psi .* I_N .* kN_full));
 
-T_demand = sum( psi(I_A) .* tA_full(I_A), 'all' );
+N_supply = sum(sum(psi .* I_W));
+N_demand = sum(sum(psi .* I_N .* nN_full));
 
-YA = sum( psi(I_A) .* yA_full(I_A), 'all' );
-YN = sum( psi(I_N) .* yN_full(I_N), 'all' );
+T_demand = sum(sum(psi .* I_A .* tA_full));
+
+YA = sum(sum(psi .* I_A .* yA_full));
+YN = sum(sum(psi .* I_N .* yN_full));
 
 m_pos = max(m_disc, 0);
-CA = sum( psi(:) .* ( P.cbarA + (P.psiA/p) * m_pos(:) ) );
-CN = sum( psi(:) .* ( P.cbarN + (P.psiN)   * m_pos(:) ) );
+CA = sum(sum( psi .* ( P.cbarA + (P.psiA/p) * m_pos ) ));
+CN = sum(sum( psi .* ( P.cbarN + (P.psiN)   * m_pos ) ));
 
 AGG = struct();
 AGG.K_supply = K_supply;  AGG.K_demand = K_demand;

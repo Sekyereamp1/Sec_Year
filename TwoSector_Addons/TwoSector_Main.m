@@ -1,4 +1,4 @@
-function results = TwoSector_Main()
+function results = TwoSector_Main(opts)
 % TW0SECTOR_MAIN
 % -------------------------------------------------------------------------
 % Two-sector extension based on the structure/logic of the uploaded code:
@@ -11,7 +11,16 @@ function results = TwoSector_Main()
 % - No land-backed collateral (constraints: k_s <= phi_s * a)
 % -------------------------------------------------------------------------
 
-clc
+if nargin < 1 || isempty(opts)
+    opts = struct();
+elseif ~isstruct(opts)
+    error('TwoSector_Main:invalidInput', ...
+          'Optional argument must be a struct with configuration overrides.');
+end
+
+if ~isfield(opts, 'suppress_clc') || ~opts.suppress_clc
+    clc
+end
 
 %% PARAMETERS (follow your previous style; only add what's needed)
 P = struct();
@@ -34,24 +43,7 @@ P.NzN      = 11;      % grid size non-ag
 % Asset grid consistent with earlier files
 P.Na      = 201;
 P.int     = 10;
-P.Na_int  = (P.Na-1)*P.int + 1;
 P.Aupper  = 2500;
-
-Agrid     = linspace(log(1.1),log(P.Aupper+1),P.Na)';
-Agrid     = exp(Agrid)-1;
-
-% Build fine asset grid for interpolation (as in earlier files)
-Agrid_int = ones(P.Na_int,1);
-for i = 1:P.Na-1
-    for j = 1:P.int
-        if j == 1
-            Agrid_int((i-1)*P.int+j) = Agrid(i);
-        else
-            Agrid_int((i-1)*P.int+j) = Agrid(i) + (Agrid(i+1)-Agrid(i))/P.int*(j-1);
-        end
-    end
-end
-Agrid_int((P.Na-1)*P.int+1) = Agrid(P.Na);
 
 % Financial frictions (sector-specific; fallback to original phi if absent)
 P.phi  = 2.009;
@@ -73,12 +65,81 @@ P.gammaA = P.gamma;
 P.alphaN = P.alpha;
 P.gammaN = P.gamma;
 
+% Allow callers to override baseline parameters
+opt_fields = fieldnames(opts);
+P_fields = fieldnames(P);
+for f = 1:numel(opt_fields)
+    fname = opt_fields{f};
+    if ismember(fname, P_fields)
+        P.(fname) = opts.(fname);
+    end
+end
+
+% Derived quantities that may depend on overrides
+if ~isfield(opts, 'phiA')
+    P.phiA = P.phi;
+end
+if ~isfield(opts, 'phiN')
+    P.phiN = P.phi;
+end
+if ~isfield(opts, 'psiN')
+    P.psiN = 1 - P.psiA;
+end
+
+if isfield(opts, 'Na_int')
+    P.Na_int = opts.Na_int;
+else
+    P.Na_int = (P.Na-1) * P.int + 1;
+end
+
+Agrid     = linspace(log(1.1),log(P.Aupper+1),P.Na)';
+Agrid     = exp(Agrid)-1;
+
+% Build fine asset grid for interpolation (as in earlier files)
+Agrid_int = ones(P.Na_int,1);
+for i = 1:P.Na-1
+    for j = 1:P.int
+        if j == 1
+            Agrid_int((i-1)*P.int+j) = Agrid(i);
+        else
+            Agrid_int((i-1)*P.int+j) = Agrid(i) + (Agrid(i+1)-Agrid(i))/P.int*(j-1);
+        end
+    end
+end
+Agrid_int((P.Na-1)*P.int+1) = Agrid(P.Na);
+
 % INITIAL PRICES (same bracket-search logic as your files)
 p      = 1.0;  ph      = 4.0;  pl      = 0.05;   % ag good relative price
 w      = 0.8;  wh      = 4.0;  wl      = 0.01;   % wage
 rhoL   = 1.0;  rhoH    = 6.0;  rhol    = 0.01;   % land rent (varrho)
 r      = 0.05; rh      = 0.10; rl      = -0.01;  % bond rate
+
+if isfield(opts, 'p_init'),  p = opts.p_init;  end
+if isfield(opts, 'p_high'),  ph = opts.p_high; end
+if isfield(opts, 'p_low'),   pl = opts.p_low;  end
+if isfield(opts, 'w_init'),  w = opts.w_init;  end
+if isfield(opts, 'w_high'),  wh = opts.w_high; end
+if isfield(opts, 'w_low'),   wl = opts.w_low;  end
+if isfield(opts, 'rho_init'), rhoL = opts.rho_init; end
+if isfield(opts, 'rho_high'), rhoH = opts.rho_high; end
+if isfield(opts, 'rho_low'),  rhol = opts.rho_low;  end
+if isfield(opts, 'r_init'),   r = opts.r_init;  end
+if isfield(opts, 'r_high'),   rh = opts.r_high; end
+if isfield(opts, 'r_low'),    rl = opts.r_low;  end
+
 tol_p  = 1e-3; tol_w   = 1e-4; tol_rho = 1e-3; tol_r = 1e-3;
+if isfield(opts, 'tol_p'),   tol_p   = opts.tol_p;   end
+if isfield(opts, 'tol_w'),   tol_w   = opts.tol_w;   end
+if isfield(opts, 'tol_rho'), tol_rho = opts.tol_rho; end
+if isfield(opts, 'tol_r'),   tol_r   = opts.tol_r;   end
+
+verbose = true;
+if isfield(opts, 'verbose'), verbose = logical(opts.verbose); end
+
+max_ite_r = 30;
+if isfield(opts, 'max_ite_r'), max_ite_r = opts.max_ite_r; end
+max_ite_w = 30;
+if isfield(opts, 'max_ite_w'), max_ite_w = opts.max_ite_w; end
 
 % Storage
 V     = zeros(P.Na, P.NzA*P.NzN);
@@ -89,14 +150,14 @@ psi   = ones(P.Na, P.NzA*P.NzN) / (P.Na * P.NzA * P.NzN);
 [zA_grid, PrA, zN_grid, PrN, z_pair, PrZ] = build_z_grids(P);
 
 %% Outer loop: interest rate
-distance_r = inf; ite_r = 0; max_ite_r = 30;
+distance_r = inf; ite_r = 0;
 while (abs(distance_r) > tol_r) && (ite_r <= max_ite_r)
     ite_r = ite_r + 1;
     R = r + P.delta;
 
     %% Inner loop: wage, land rent, relative price
     distance_w = inf; distance_rho = inf; distance_p = inf;
-    ite_w = 0; max_ite_w = 30;
+    ite_w = 0;
 
     while ( (abs(distance_w) > tol_w) || (abs(distance_rho) > tol_rho) || (abs(distance_p) > tol_p) ) ...
             && (ite_w <= max_ite_w)
@@ -134,9 +195,11 @@ while (abs(distance_r) > tol_r) && (ite_r <= max_ite_r)
         exT = AGG.T_demand - P.Tbar;
         exG = (p*AGG.YA + AGG.YN) - (p*AGG.CA + AGG.CN + P.delta*AGG.K_demand);
 
-        fprintf(['it_r %02d | it_in %02d | exK=%+.3e exN=%+.3e exT=%+.3e exG=%+.3e | ' ...
-                 'p=%.3f w=%.3f rhoL=%.3f r=%.3f\n'], ...
-                 ite_r, ite_w, exK, exN, exT, exG, p, w, rhoL, r);
+        if verbose
+            fprintf(['it_r %02d | it_in %02d | exK=%+.3e exN=%+.3e exT=%+.3e exG=%+.3e | ' ...
+                     'p=%.3f w=%.3f rhoL=%.3f r=%.3f\n'], ...
+                     ite_r, ite_w, exK, exN, exT, exG, p, w, rhoL, r);
+        end
 
         if max(abs([exK, exN, exT, exG])) < 5e-3
             break;
@@ -170,8 +233,11 @@ results.psi    = psi;
 results.pol_s  = pol_s;
 results.aggregates = AGG;
 results.params = P;
+results.residuals = [exK, exN, exT, exG];
 results.msg    = 'Two-sector equilibrium (approx).';
 
-fprintf('\nFinal prices: p=%.4f, w=%.4f, rhoL=%.4f, r=%.4f\n', p, w, rhoL, r);
+if verbose
+    fprintf('\nFinal prices: p=%.4f, w=%.4f, rhoL=%.4f, r=%.4f\n', p, w, rhoL, r);
+end
 
 end
